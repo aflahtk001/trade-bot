@@ -1,0 +1,11 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {labeledDataset,replay} from '../research.mjs';
+import {defaults} from '../engine.mjs';
+const at=Date.parse('2026-09-29T05:00:00Z');
+const signal={id:'a',mode:'live',symbol:'TCS',model:'convaiinnovations/laya',headline:'Example',sentiment:'positive',confidence:.9,received:at,published:at-1000,baseline:100,outcome:.02,due:at+1800000,observed:at+1800000,rules:JSON.stringify(defaults)};
+test('training excludes simulated, future and delayed observations',()=>{assert.equal(labeledDataset([signal],at+1800000).length,1);assert.equal(labeledDataset([signal],at).length,0);assert.equal(labeledDataset([{...signal,mode:'demo'}],at+1800000).length,0);assert.equal(labeledDataset([{...signal,observed:at+1900000}],at+2000000).length,0);});
+test('replay never uses a future quote for entry',()=>{const q=[{mode:'live',symbol:'TCS',tradable:1,price:100,at:at+1},{mode:'live',symbol:'TCS',tradable:1,price:102,at:at+1800000}];assert.equal(replay([signal],q,defaults,'live').count,0);q[0].at=at;const result=replay([signal],q,defaults,'live');assert.equal(result.count,1);assert.ok(result.net>0&&result.net<200);});
+test('replay closes on intratrade loss limit and blocks further daily entries',()=>{const q=[{mode:'live',symbol:'TCS',tradable:1,price:100,at},{mode:'live',symbol:'TCS',tradable:1,price:95,at:at+60000},{mode:'live',symbol:'TCS',tradable:1,price:95,at:at+120000}];const result=replay([signal,{...signal,id:'b',received:at+120000,published:at+119000}],q,{...defaults,maxLoss:100,stopLossPct:0},'live');assert.equal(result.count,1);assert.equal(result.trades[0].reason,'Daily loss limit');assert.equal(result.skipped['Risk limit / existing position'],1);});
+test('missing exits stay unresolved and cannot look like a complete backtest',()=>{const q=[{mode:'live',symbol:'TCS',tradable:1,price:100,at}];const result=replay([signal],q,defaults,'live');assert.equal(result.count,0);assert.equal(result.unresolved,1);});
+test('closed exchange quotes cannot open a simulated live-data position',()=>{const q=[{mode:'live',symbol:'TCS',tradable:0,price:100,at}];const result=replay([signal],q,defaults,'live');assert.equal(result.unresolved,0);assert.equal(result.skipped['No timely tradable entry quote'],1);});

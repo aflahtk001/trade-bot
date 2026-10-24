@@ -1,0 +1,14 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {performance,eventType,signalFeatures,horizonTargets} from '../evidence.mjs';
+import {replay,compareReplays} from '../research.mjs';
+import {defaults} from '../engine.mjs';
+const at=Date.parse('2026-09-29T05:00:00Z');
+const signal={id:'a',mode:'live',symbol:'TCS',model:'base',headline:'New order announced',sentiment:'positive',confidence:.9,received:at,published:at-1000};
+const quote=(price,time)=>({mode:'live',symbol:'TCS',tradable:1,price,at:time});
+test('performance distinguishes missing ratios and includes losing streak and drawdown',()=>{const p=performance([{closed:1,pnl:100},{closed:2,pnl:-40},{closed:3,pnl:-20}]);assert.equal(p.expectancy,40/3);assert.equal(p.profitFactor,100/60);assert.equal(p.maxDrawdown,60);assert.equal(p.worstLosingStreak,2);assert.equal(performance([]).expectancy,null);});
+test('features do not invent unavailable publication prices or market context',()=>{const p=signalFeatures(signal,quote(101,at),null,null,at);assert.equal(p.moveSincePublication,null);assert.equal(p.scannerGain,null);assert.equal(p.eventType,'order');assert.equal(eventType('SEBI penalty'),'regulatory');assert.equal(signalFeatures(signal,quote(102,at),quote(100,at-1000),null,at).moveSincePublication,.020000000000000018);});
+test('late-day horizons never cross the live cutoff',()=>{const t=Date.parse('2026-09-29T09:40:00Z');assert.deepEqual(horizonTargets(t,'live').map(h=>h.horizon),['5','close']);assert.equal(horizonTargets(t,'demo').length,4);});
+test('protection exits at observed price rather than fabricating the stop fill',()=>{const r=replay([signal],[quote(100,at),quote(97,at+60000)],{...defaults,maxLoss:10000},'live');assert.equal(r.count,1);assert.equal(r.trades[0].reason,'Stop loss');assert.ok(r.trades[0].exit<97);});
+test('target, concurrent position cap and publication move checks are enforced',()=>{assert.equal(replay([signal],[quote(100,at),quote(104,at+60000)],defaults,'live').trades[0].reason,'Profit target');const moved={...signal,features:JSON.stringify({moveSincePublication:.03})};assert.equal(replay([moved],[quote(100,at)],defaults,'live').skipped['Price already moved'],1);const other={...signal,id:'b',symbol:'INFY'};const r=replay([signal,other],[quote(100,at),{...quote(100,at),symbol:'INFY'}],{...defaults,maxPositions:1},'live');assert.equal(r.unresolved,1);assert.equal(r.skipped['Risk limit / existing position'],1);});
+test('random opportunity controls are deterministic and expose unresolved exits',()=>{const qs=[quote(100,at)];const first=compareReplays([signal],qs,defaults,'live');assert.deepEqual(first.random.runs.map(r=>r.net),compareReplays([signal],qs,defaults,'live').random.runs.map(r=>r.net));assert.equal(first.random.seeds,20);assert.equal(first.random.unresolved,20);});
